@@ -5,6 +5,14 @@
 #include <string.h>
 #include <stdlib.h>
 #include <orbis/libkernel.h>
+#include <orbis/Sysmodule.h>
+
+/* libSceAvPlayer is not one of the "always loaded" base modules (unlike
+ * VideoOut/Pad/UserService, which already appear in a fresh process's module
+ * list) - it has to be brought in explicitly, or every sceAvPlayer* call
+ * traps with PRX_NOT_RESOLVED_FUNCTION because the import was never
+ * resolved. Confirmed on hardware: see docs/NOTES.md. */
+static bool mv_avplayer_module_loaded = false;
 
 /* Caps the decoded-frame buffer; matches the app's 1920x1080 framebuffer
  * (see FRAME_W/FRAME_H in main.cpp). A source larger than this is rejected
@@ -65,9 +73,14 @@ static void mv_av_event(void *, int32_t eventId, int32_t sourceId, void *) {
 }
 
 void mv_player_init() {
-    /* Nothing global to set up yet; callbacks above are stateless statics.
-     * Kept as a separate entry point so main() has one obvious place to call
-     * before the first mv_player_open(). */
+    if (mv_avplayer_module_loaded) return;
+    int32_t rc = sceSysmoduleLoadModule(ORBIS_SYSMODULE_AV_PLAYER);
+    if (rc != 0) {
+        printf("[MediaVault] sceSysmoduleLoadModule(AV_PLAYER) failed (0x%08X) - "
+               "playback will not work\n", (unsigned)rc);
+        return;
+    }
+    mv_avplayer_module_loaded = true;
 }
 
 static void set_err(const char *fmt, ...) {
@@ -81,6 +94,11 @@ static void set_err(const char *fmt, ...) {
 bool mv_player_open(const char *path) {
     mv_player_close();
     mv_err[0] = '\0';
+
+    if (!mv_avplayer_module_loaded) {
+        set_err("libSceAvPlayer module is not loaded (see startup log)");
+        return false;
+    }
 
     SceAvPlayerInitData init;
     memset(&init, 0, sizeof(init));

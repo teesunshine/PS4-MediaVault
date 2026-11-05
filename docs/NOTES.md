@@ -23,7 +23,30 @@ https://docs.vitasdk.org/group__SceAvPlayerUser.html), plus the PS4-only functio
 (`EnableStream`, `GetStreamInfo`, `JumpToTime`, the `Ex` variants, etc.) added by
 name only, with no known signature yet.
 
-**Not yet run on hardware.** First things to check if it doesn't work:
+## First hardware run: fixed
+First attempt crashed immediately on calling into AvPlayer:
+```
+# exception: 0xa0020101 (PRX_NOT_RESOLVED_FUNCTION)
+# === Call to unpatched function is detected!!! ===
+# Required Module Name    : libSceAvPlayer
+# Required Function NID   : 0x692EBA448D201A0A
+```
+and `libSceAvPlayer.sprx` was conspicuously absent from the backtrace's loaded-module
+list (libkernel, libSceVideoOut, libScePad, etc. were all there). Root cause: unlike
+VideoOut/Pad/UserService, AvPlayer is **not** one of the modules a fresh process
+has loaded by default - it has to be brought in with
+`sceSysmoduleLoadModule(ORBIS_SYSMODULE_AV_PLAYER)` (`orbis/Sysmodule.h`,
+id `0x00A5`) before any `sceAvPlayer*` call, or every call traps exactly like
+this. Fixed in `mv_player_init()` (called once at startup), with
+`-lSceSysmodule` added to the Makefile. `mv_player_open()` now also checks the
+module actually loaded and fails cleanly instead of calling into an unresolved
+import if it didn't.
+
+This was the only hardware feedback so far - the struct-layout and NV12 questions
+below are still open, since playback hasn't gotten past this point yet.
+
+**Still unverified on hardware** - first things to check once the above gets you
+into `sceAvPlayerInit()`:
 - `sceAvPlayerInit()` returns a negative/garbage handle, or crashes outright ->
   the `SceAvPlayerInitData`/`SceAvPlayerMemAllocator`/`SceAvPlayerFileReplacement`
   field order or sizes in `mv_avplayer.h` are wrong for this firmware's

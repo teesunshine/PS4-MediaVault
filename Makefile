@@ -9,7 +9,7 @@ VERSION     := 1.00
 TITLE_ID    := BREW00099
 CONTENT_ID  := IV0000-BREW00099_00-MEDIAVAULT000000
 
-LIBS        := -lc -lkernel -lc++ -lSceVideoOut -lScePad -lSceUserService -lSceAvPlayer
+LIBS        := -lc -lkernel -lc++ -lSceVideoOut -lScePad -lSceUserService -lSceSysmodule -lSceAvPlayer
 LIBMODULES  := $(wildcard sce_module/*)
 
 TC          := $(OO_PS4_TOOLCHAIN)
