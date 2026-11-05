@@ -1,7 +1,7 @@
 /*
- * PS4-MediaVault - Phase 1: controller-driven file browser.
+ * PS4-MediaVault - Phase 1 file browser + Phase 2 playback.
  * Browses internal storage (/data) and, where the sandbox allows, USB drives.
- * Selecting a video currently shows its info; playback arrives in Phase 2.
+ * Selecting a video plays it through the system AvPlayer (src/mv_player.*).
  */
 #include <stdio.h>
 #include <string.h>
@@ -13,6 +13,7 @@
 #include "log.h"
 #include "mv_list.h"
 #include "mv_fs_ps4.h"
+#include "mv_player.h"
 #include "pad.h"
 #include "text.h"
 
@@ -41,7 +42,7 @@ static const Root ROOTS[] = {
 };
 static const int ROOT_COUNT = sizeof(ROOTS) / sizeof(ROOTS[0]);
 
-enum Mode { MODE_ROOTS, MODE_DIR };
+enum Mode { MODE_ROOTS, MODE_DIR, MODE_PLAYER };
 
 struct App {
     Mode mode = MODE_ROOTS;
@@ -50,6 +51,7 @@ struct App {
     int sel = 0, top = 0;
     char status[320] = "";
     bool statusErr = false;
+    char nowPlaying[256] = "";
 };
 
 static void set_status(App &a, bool err, const char *fmt, const char *s1 = "", unsigned v = 0) {
@@ -103,15 +105,30 @@ static void activate(App &a) {
     if (a.list.count == 0) return;
     const mv_entry_t &e = a.list.items[a.sel];
     if (e.is_dir) { enter_dir(a, e.path); return; }
-    char size[32];
-    mv_format_size(e.size, size, sizeof(size));
-    char msg[320];
-    snprintf(msg, sizeof(msg), "%s  (%s)", e.name, size);
-    set_status(a, false, "Selected: %s  -  playback arrives in Phase 2", msg);
+    if (mv_player_open(e.path)) {
+        snprintf(a.nowPlaying, sizeof(a.nowPlaying), "%s", e.name);
+        a.mode = MODE_PLAYER;
+    } else {
+        char msg[320];
+        snprintf(msg, sizeof(msg), "Could not play %s: %s", e.name, mv_player_error());
+        set_status(a, true, "%s", msg);
+    }
+}
+
+static void stop_playback(App &a) {
+    mv_player_close();
+    a.mode = MODE_DIR;
+    a.status[0] = '\0';
 }
 
 /* Returns true if anything changed and the screen needs redrawing. */
 static bool handle_input(App &a, const Pad &pad) {
+    if (a.mode == MODE_PLAYER) {
+        if (pad.Pressed(ORBIS_PAD_BUTTON_CROSS))  mv_player_toggle_pause();
+        if (pad.Pressed(ORBIS_PAD_BUTTON_CIRCLE)) stop_playback(a);
+        return true; /* video is animated - always redraw */
+    }
+
     int count = (int)a.list.count;
     int oldSel = a.sel;
     if (pad.Repeat(ORBIS_PAD_BUTTON_UP))   a.sel--;
@@ -137,7 +154,22 @@ static void truncate_to(const char *src, char *dst, size_t maxChars) {
     snprintf(dst, maxChars + 1, "%.*s...", (int)maxChars - 3, src);
 }
 
+static void draw_player(Scene2D *s, const App &a) {
+    s->FrameBufferFill({0, 0, 0});
+    mv_player_blit(s, 0, 0, FRAME_W, FRAME_H);
+
+    char line[300];
+    const char *state = mv_player_state() == MV_PLAYER_PAUSED ? "Paused" : "Playing";
+    snprintf(line, sizeof(line), "%s - %s", state, a.nowPlaying);
+    char shown[140];
+    truncate_to(line, shown, 110);
+    ui_text(s, MARGIN, 30, shown, 2, C_TEXT);
+    ui_text(s, MARGIN, FRAME_H - 50, "[X] Play/Pause     [O] Stop", 2, C_DIM);
+}
+
 static void draw(Scene2D *s, const App &a) {
+    if (a.mode == MODE_PLAYER) { draw_player(s, a); return; }
+
     s->FrameBufferFill(C_BG);
 
     ui_text(s, MARGIN, 30, "PS4 MediaVault", 3, C_TEXT);
@@ -189,7 +221,7 @@ static void draw(Scene2D *s, const App &a) {
 
 int main(void) {
     setvbuf(stdout, NULL, _IONBF, 0);
-    printf("[MediaVault] Phase 1 starting\n");
+    printf("[MediaVault] Phase 1+2 starting\n");
 
     Scene2D *scene = new Scene2D(FRAME_W, FRAME_H, 4);
     if (!scene->Init(0xC000000, 2)) {
@@ -200,6 +232,8 @@ int main(void) {
     Pad pad;
     if (!pad.Init()) printf("[MediaVault] failed to init controller\n");
 
+    mv_player_init();
+
     App app;
     mv_list_init(&app.list);
     load_roots(app);
@@ -208,6 +242,19 @@ int main(void) {
     for (;;) {
         pad.Poll();
         if (handle_input(app, pad)) dirty = 2;
+
+        if (app.mode == MODE_PLAYER) {
+            mv_player_update();
+            if (mv_player_finished() || mv_player_state() == MV_PLAYER_ERROR) {
+                bool wasErr = mv_player_state() == MV_PLAYER_ERROR;
+                char err[160];
+                snprintf(err, sizeof(err), "%s", mv_player_error());
+                stop_playback(app);
+                if (wasErr) set_status(app, true, "%s", err);
+                dirty = 2;
+            }
+        }
+
         if (dirty > 0) {
             draw(scene, app);
             scene->SubmitFlip(frameID);
