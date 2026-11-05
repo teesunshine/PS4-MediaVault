@@ -14,7 +14,28 @@ Learned from klog output on a real console:
 - **`/data` is readable. `/mnt` (and so `/mnt/usb0`) is NOT visible** from the sandboxed app.
   USB support needs a sandbox escape (e.g. libjbc) - not implemented yet.
 
-## Phase 2 risk
+## Phase 2 status
 The toolchain's `orbis/AvPlayer.h` only declares bare names (`void sceAvPlayerInit();`)
-with no parameter types or structs. Real prototypes/structs must be sourced elsewhere
-and verified on hardware before video playback can work.
+with no parameter types or structs, as expected. `src/mv_avplayer.h` now has real
+prototypes/structs instead, transcribed from the public PS Vita AvPlayer headers
+(same library family, same ABI going back to PS3/Vita - see
+https://docs.vitasdk.org/group__SceAvPlayerUser.html), plus the PS4-only functions
+(`EnableStream`, `GetStreamInfo`, `JumpToTime`, the `Ex` variants, etc.) added by
+name only, with no known signature yet.
+
+**Not yet run on hardware.** First things to check if it doesn't work:
+- `sceAvPlayerInit()` returns a negative/garbage handle, or crashes outright ->
+  the `SceAvPlayerInitData`/`SceAvPlayerMemAllocator`/`SceAvPlayerFileReplacement`
+  field order or sizes in `mv_avplayer.h` are wrong for this firmware's
+  `libSceAvPlayer.sprx`; check against a disassembly.
+- Playback starts but the picture is wrong colors/shifted/garbled -> the NV12
+  layout assumption in `mv_player.cpp`'s `nv12_to_rgb()` is wrong (could be a
+  different plane order, a non-zero row pitch/padding, or the output isn't
+  NV12 at all).
+- No crash, nothing drawn -> check `sceAvPlayerGetVideoData()`'s return value
+  and `info.pData`/`details.video.width/height` with a debug `printf`; the
+  struct offsets inside `SceAvPlayerFrameInfo`/`SceAvPlayerStreamDetails`
+  are the next thing to suspect.
+- `-lSceAvPlayer` fails to link -> the toolchain's `lib/` stub for it is
+  missing; it needs to come from wherever the other stubs (`-lSceVideoOut`
+  etc.) in this project's `Makefile` came from.
