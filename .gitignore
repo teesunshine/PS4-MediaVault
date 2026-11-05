@@ -1,0 +1,13 @@
+build/
+build_test
+*.o
+*.elf
+*.oelf
+*.pkg
+eboot.bin
+pkg.gp4
+sce_sys/param.sfo
+# Copied from the toolchain samples by `make setup` (not redistributed here):
+sce_module/
+sce_sys/about/
+sce_sys/icon0.png

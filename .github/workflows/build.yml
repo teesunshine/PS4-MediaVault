@@ -1,0 +1,46 @@
+name: Build
+on:
+  push: { branches: [main] }
+  pull_request:
+  workflow_dispatch:
+
+env:
+  OO_VERSION: v0.5.4
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make test
+
+  build-ps4:
+    runs-on: ubuntu-latest
+    needs: host-tests
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install LLVM
+        run: sudo apt-get update && sudo apt-get install -y clang lld
+      - name: Download OpenOrbis toolchain
+        run: |
+          mkdir -p $HOME/oo
+          curl -sL -o $HOME/oo/tc.tar.gz \
+            https://github.com/OpenOrbis/OpenOrbis-PS4-Toolchain/releases/download/${OO_VERSION}/toolchain-llvm-18.tar.gz
+          tar xf $HOME/oo/tc.tar.gz -C $HOME/oo
+          echo "OO_PS4_TOOLCHAIN=$HOME/oo/OpenOrbis/PS4Toolchain" >> $GITHUB_ENV
+      - name: Copy toolchain sample assets
+        run: make setup
+      - name: Compile and link (required)
+        run: make eboot.bin
+      - name: Package .pkg (best effort - needs .NET)
+        continue-on-error: true
+        env:
+          DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: "1"
+        run: make
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MediaVault-build
+          path: |
+            *.pkg
+            eboot.bin
+          if-no-files-found: warn
